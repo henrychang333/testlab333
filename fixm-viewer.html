@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIXM / FF-ICE XML 檢視器（路徑可換行）</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; }
+        .tag { font-family: monospace; font-size: 0.75rem; color: #6b7280; background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+        
+        /* 完整路徑：允許換行、不超出邊界 */
+        .full-path { 
+            font-family: monospace; 
+            font-size: 0.78rem; 
+            color: #64748b; 
+            word-break: break-all; 
+            overflow-wrap: break-word; 
+            line-height: 1.4; 
+        }
+        
+        .eobt-date { font-size: 1.45rem; font-weight: 700; color: #1f2937; }
+        .eobt-time { font-size: 1.2rem; color: #4f46e5; font-weight: 500; }
+        .duration-readable { font-size: 1.45rem; font-weight: 700; color: #4f46e5; }
+        .duration-original { font-size: 0.82rem; color: #6b7280; }
+        
+        .field-card {
+            transition: all 0.2s;
+        }
+        .field-card:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); 
+        }
+        table th, table td { text-align: left; }
+    </style>
+</head>
+<body class="bg-gray-50 py-8">
+    <div class="max-w-7xl mx-auto px-4">
+        <div class="bg-white rounded-3xl shadow-xl p-8">
+            <h1 class="text-3xl font-bold text-center mb-8 text-indigo-700">
+                FIXM / FF-ICE XML 檢視器（完整路徑可換行）
+            </h1>
+
+            <div class="border-2 border-dashed border-indigo-300 rounded-2xl p-10 text-center mb-10 hover:border-indigo-500">
+                <input type="file" id="fileInput" accept=".xml" class="hidden" onchange="handleFile(this)">
+                <label for="fileInput" class="cursor-pointer">
+                    <div class="text-6xl mb-4">📤</div>
+                    <p class="text-xl font-medium">點擊上傳 FF-ICE XML 檔案</p>
+                </label>
+            </div>
+
+            <div id="result" class="hidden space-y-12">
+
+                <div class="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 rounded-2xl">
+                    <div class="flex items-center gap-4">
+                        <span class="text-4xl">📋</span>
+                        <div>
+                            <div class="tag">Message Type</div>
+                            <div id="messageType" class="text-3xl font-bold text-indigo-700"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="statusInfo" class="hidden bg-amber-50 border border-amber-200 p-6 rounded-2xl"></div>
+
+                <div>
+                    <h2 class="text-2xl font-semibold mb-4">✈️ 航班完整資訊</h2>
+                    <div id="flightInfo" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                </div>
+
+                <div>
+                    <h2 class="text-2xl font-semibold mb-4">🛫 航路元素（agreed）</h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm" id="routeTable">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="w-12">序號</th>
+                                    <th>起點</th>
+                                    <th>距離 (m)</th>
+                                    <th>航路設計</th>
+                                    <th>座標</th>
+                                </tr>
+                            </thead>
+                            <tbody id="routeBody" class="divide-y"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div>
+                    <h2 class="text-2xl font-semibold mb-4">🌳 完整 XML 樹狀結構</h2>
+                    <div id="xmlTree" class="bg-gray-900 text-gray-100 p-6 rounded-2xl text-sm overflow-auto max-h-[650px] font-mono border border-gray-700"></div>
+                </div>
+
+                <div class="text-center pt-6">
+                    <button onclick="resetPage()" class="px-8 py-3 bg-gray-200 hover:bg-gray-300 rounded-xl font-medium">
+                        上傳另一個檔案
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function handleFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => parseFFICEXML(e.target.result);
+            reader.readAsText(file);
+        }
+
+        function parseFFICEXML(xmlText) {
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(xmlText, "text/xml");
+
+            let msgType = xml.querySelector("type, messageType")?.textContent || xml.documentElement.tagName || "Unknown";
+            document.getElementById("messageType").textContent = msgType;
+
+            let flight = xml.querySelector("Flight, flight");
+
+            if (!flight) {
+                renderStatusOnly(xml, msgType);
+                return;
+            }
+
+            renderAllFlightFields(flight);
+            renderRouteTable(flight);
+            renderXMLTree(xml.documentElement, document.getElementById("xmlTree"));
+
+            document.getElementById("result").classList.remove("hidden");
+        }
+
+        function renderAllFlightFields(flight) {
+            const container = document.getElementById("flightInfo");
+            container.innerHTML = "";
+
+            const fields = collectAllFields(flight);
+
+            fields.forEach(field => {
+                const div = document.createElement("div");
+                div.className = "bg-gray-50 p-6 rounded-2xl field-card";
+
+                if (field.tag.toLowerCase().includes("estimatedoffblocktime")) {
+                    const datePart = field.value.split('T')[0];
+                    const timePart = field.value.split('T')[1]?.replace('Z', '') || '';
+                    div.innerHTML = `
+                        <div class="full-path">${field.fullPath}</div>
+                        <div class="tag mt-1 mb-2">estimatedOffBlockTime</div>
+                        <div class="text-sm text-gray-500">預計離場時間 (UTC)</div>
+                        <div class="eobt-date mt-3">${datePart}</div>
+                        <div class="eobt-time">${timePart} UTC</div>
+                        <div class="duration-original mt-3">原始: ${field.value}</div>
+                    `;
+                } 
+                else if (field.tag.toLowerCase().includes("totalestimatedelapsedtime")) {
+                    const readable = formatDuration(field.value);
+                    div.innerHTML = `
+                        <div class="full-path">${field.fullPath}</div>
+                        <div class="tag mt-1 mb-2">totalEstimatedElapsedTime</div>
+                        <div class="text-sm text-gray-500">總飛行時間</div>
+                        <div class="duration-readable mt-2">${readable}</div>
+                        <div class="duration-original mt-1">原始: ${field.value}</div>
+                    `;
+                } 
+                else {
+                    const label = field.tag.replace(/([A-Z])/g, ' $1').trim();
+                    div.innerHTML = `
+                        <div class="full-path">${field.fullPath}</div>
+                        <div class="tag mt-1 mb-2">${field.tag}</div>
+                        <div class="text-sm text-gray-500">${label}</div>
+                        <div class="mt-2 text-lg font-semibold">${field.value}</div>
+                    `;
+                }
+                container.appendChild(div);
+            });
+        }
+
+        function collectAllFields(node, prefix = "", fields = []) {
+            if (!node || node.nodeType !== 1) return fields;
+            if (node.tagName === "routeTrajectoryGroup") return fields;
+
+            const currentPath = prefix ? `${prefix}/${node.tagName}` : node.tagName;
+
+            const children = Array.from(node.children);
+            if (children.length === 0 && node.textContent.trim()) {
+                fields.push({
+                    tag: node.tagName,
+                    fullPath: currentPath,
+                    value: node.textContent.trim()
+                });
+            } else {
+                children.forEach(child => collectAllFields(child, currentPath, fields));
+            }
+            return fields;
+        }
+
+        function formatDuration(duration) {
+            const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            if (!match) return duration;
+
+            const h = parseInt(match[1] || 0);
+            const m = parseInt(match[2] || 0);
+            const s = parseInt(match[3] || 0);
+
+            let parts = [];
+            if (h > 0) parts.push(h);
+            if (m > 0 || h > 0) parts.push(m.toString().padStart(2, '0'));
+            if (s > 0 || m > 0 || h > 0) parts.push(s.toString().padStart(2, '0'));
+
+            return parts.join(':') || "00:00";
+        }
+
+        function renderRouteTable(flight) {
+            const tbody = document.getElementById("routeBody");
+            tbody.innerHTML = "";
+            const elements = flight.querySelectorAll("element");
+
+            elements.forEach(el => {
+                const seq = el.getAttribute("seqNum") || "—";
+                const dist = el.querySelector("alongRouteDistance")?.textContent || "—";
+                const designator = el.querySelector("routeDesignatorToNextElement > *")?.textContent || "—";
+                const pos = el.querySelector("pos")?.textContent || "—";
+                const pointValue = el.querySelector("locationIndicator, designator")?.textContent || "—";
+
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td class="font-medium">${seq}</td>
+                    <td class="font-medium">${pointValue}</td>
+                    <td>${dist}</td>
+                    <td>${designator}</td>
+                    <td class="font-mono text-xs">${pos}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderStatusOnly(xml, msgType) {
+            const statusDiv = document.getElementById("statusInfo");
+            statusDiv.classList.remove("hidden");
+            statusDiv.innerHTML = `<div class="text-lg font-medium">此報文為「${msgType}」 — 無完整 Flight 資料</div>`;
+            document.getElementById("result").classList.remove("hidden");
+        }
+
+        function renderXMLTree(node, container) {
+            container.innerHTML = "";
+            container.appendChild(createTreeNode(node));
+        }
+
+        function createTreeNode(node) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                if (!node.textContent.trim()) return null;
+                const div = document.createElement("div");
+                div.className = "pl-6 text-emerald-400";
+                div.textContent = node.textContent.trim();
+                return div;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+            const details = document.createElement("details");
+            details.open = true;
+            const summary = document.createElement("summary");
+            summary.className = "flex items-center gap-2 text-blue-300 hover:text-blue-200";
+
+            const tagNameEl = document.createElement("span");
+            tagNameEl.className = "font-bold text-violet-300";
+            tagNameEl.textContent = `<${node.tagName}>`;
+            summary.appendChild(tagNameEl);
+
+            if (node.attributes.length > 0) {
+                const attrs = Array.from(node.attributes).map(a => `${a.name}="${a.value}"`).join(" ");
+                const attrSpan = document.createElement("span");
+                attrSpan.className = "text-amber-300 text-xs";
+                attrSpan.textContent = attrs;
+                summary.appendChild(attrSpan);
+            }
+            details.appendChild(summary);
+
+            const childContainer = document.createElement("div");
+            childContainer.className = "border-l border-gray-700 pl-4 mt-1";
+
+            let hasChildren = false;
+            node.childNodes.forEach(child => {
+                const childNode = createTreeNode(child);
+                if (childNode) {
+                    childContainer.appendChild(childNode);
+                    hasChildren = true;
+                }
+            });
+
+            if (hasChildren) details.appendChild(childContainer);
+            else if (node.textContent.trim()) {
+                const valueDiv = document.createElement("div");
+                valueDiv.className = "pl-6 text-emerald-400";
+                valueDiv.textContent = node.textContent.trim();
+                details.appendChild(valueDiv);
+            }
+            return details;
+        }
+
+        function resetPage() {
+            document.getElementById("result").classList.add("hidden");
+            document.getElementById("statusInfo").classList.add("hidden");
+            document.getElementById("fileInput").value = "";
+        }
+    </script>
+</body>
+</html>
