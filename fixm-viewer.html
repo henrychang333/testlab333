@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-	<!-- ver: 20260418 -->
+	<!-- ver: 2026-04-18 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FIXM / FF-ICE XML 檢視器</title>
@@ -16,7 +16,7 @@
         .duration-original { font-size: 0.82rem; color: #6b7280; }
         .field-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); }
         table th, table td { text-align: left; vertical-align: top; }
-        .point4d { font-size: 0.85rem; line-height: 1.4; }
+        .point4d { font-size: 0.85rem; line-height: 1.45; }
     </style>
 </head>
 <body class="bg-gray-50 py-8">
@@ -41,7 +41,7 @@
                 <div id="flightInfo" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
 
                 <div>
-                    <h2 class="text-2xl font-semibold mb-4">🛫 航路元素</h2>
+                    <h2 class="text-2xl font-semibold mb-4">🛫 航路元素（含 point4D 與風向風速）</h2>
                     <div class="overflow-x-auto">
                         <table class="w-full text-sm" id="routeTable">
                             <thead>
@@ -50,7 +50,7 @@
                                     <th>起點</th>
                                     <th>距離 (m)</th>
                                     <th>航路設計</th>
-                                    <th class="w-80">Point4D 詳細資訊</th>
+                                    <th class="w-96">Point4D 詳細資訊</th>
                                 </tr>
                             </thead>
                             <tbody id="routeBody" class="divide-y"></tbody>
@@ -113,9 +113,7 @@
                 div.className = "bg-gray-50 p-6 rounded-2xl field-card";
 
                 let displayValue = field.value;
-                if (field.uom) {
-                    displayValue += ` <span class="text-gray-500">(${field.uom})</span>`;
-                }
+                if (field.uom) displayValue += ` <span class="text-gray-500">(${field.uom})</span>`;
 
                 if (field.tag.toLowerCase().includes("estimatedoffblocktime")) {
                     const datePart = field.value.split('T')[0];
@@ -157,12 +155,11 @@
             const currentPath = prefix ? `${prefix}/${node.tagName}` : node.tagName;
 
             if (node.children.length === 0 && node.textContent.trim()) {
-                const uom = node.getAttribute("uom");
                 fields.push({
                     tag: node.tagName,
                     fullPath: currentPath,
                     value: node.textContent.trim(),
-                    uom: uom
+                    uom: node.getAttribute("uom")
                 });
             } else {
                 Array.from(node.children).forEach(child => collectAllFields(child, currentPath, fields));
@@ -183,6 +180,7 @@
             return parts.join(':') || "00:00";
         }
 
+        // ====================== 重點加強：航路元素 ======================
         function renderRouteTable(doc) {
             const tbody = document.getElementById("routeBody");
             tbody.innerHTML = "";
@@ -196,27 +194,38 @@
 
                 let point4dHTML = "—";
                 const point4d = el.querySelector("point4D");
+
                 if (point4d) {
                     const level = point4d.querySelector("altitude, flightLevel");
-                    const levelVal = level ? level.textContent + (level.getAttribute("uom") ? ` (${level.getAttribute("uom")})` : "") : "—";
+                    const levelText = level ? `${level.textContent} ${level.getAttribute("uom") ? `(${level.getAttribute("uom")})` : ''}` : "—";
+
                     const pos = point4d.querySelector("pos")?.textContent || "—";
                     const time = point4d.querySelector("absoluteTime, relativeTimeFromInitialPredictionPoint")?.textContent || "—";
 
-                    let met = "";
+                    // 風向與風速
+                    let windHTML = "";
                     const metData = point4d.querySelector("metData");
                     if (metData) {
-                        const temp = metData.querySelector("temperature");
-                        if (temp) met += `🌡️ ${temp.textContent}${temp.getAttribute("uom") ? `(${temp.getAttribute("uom")})` : ''} `;
+                        const windDir = metData.querySelector("windDirection")?.textContent;
+                        const windSpd = metData.querySelector("windSpeed")?.textContent;
+                        const temp = metData.querySelector("temperature")?.textContent;
+
+                        if (windDir && windSpd) {
+                            windHTML += `<div>🌬️ ${windDir}° / ${windSpd} m/s</div>`;
+                        }
+                        if (temp) {
+                            windHTML += `<div>🌡️ ${temp}°C</div>`;
+                        }
                     }
 
                     const prop = point4d.querySelector("pointProperty propertyType")?.textContent || "";
 
                     point4dHTML = `
                         <div class="point4d">
-                            <div><strong>高度:</strong> ${levelVal}</div>
+                            <div><strong>高度:</strong> ${levelText}</div>
                             <div><strong>時間:</strong> ${time}</div>
                             <div><strong>座標:</strong> ${pos}</div>
-                            ${met ? `<div class="mt-1">${met}</div>` : ''}
+                            ${windHTML ? `<div class="mt-2">${windHTML}</div>` : ''}
                             ${prop ? `<div class="text-amber-600 mt-1">${prop}</div>` : ''}
                         </div>
                     `;
@@ -254,11 +263,7 @@
             const summary = document.createElement("summary");
             summary.className = "flex items-center gap-2 text-blue-300 hover:text-blue-200";
 
-            let attrText = "";
-            if (node.attributes.length > 0) {
-                attrText = Array.from(node.attributes).map(a => ` ${a.name}="${a.value}"`).join("");
-            }
-
+            let attrText = Array.from(node.attributes).map(a => ` ${a.name}="${a.value}"`).join("");
             summary.innerHTML = `<span class="font-bold text-violet-300">&lt;${node.tagName}${attrText}&gt;</span>`;
             details.appendChild(summary);
 
